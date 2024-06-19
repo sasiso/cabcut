@@ -1,10 +1,10 @@
 import sys
 import vtk
-import PyQt5
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QSlider
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QSlider, QGroupBox, QRadioButton
+from PyQt5.QtCore import Qt
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from actors import createRectangle, createOval, createRound
-from cutting_plane import getCuttingPlaneActor
+from actors import createRectangle, createOval, createRound  # Assuming these are functions to create VTK objects
+from cutting_plane import getCuttingPlaneActor  # Assuming this function returns a vtkActor
 
 class OpalShapingApp(QMainWindow):
     def __init__(self):
@@ -37,11 +37,34 @@ class OpalShapingApp(QMainWindow):
         # Slider for rotating cutting plane
         self.rotation_label = QLabel('Rotation Angle:')
         self.rotation_slider = QSlider()
-        self.rotation_slider.setOrientation(PyQt5.QtCore.Qt.Horizontal)
+        self.rotation_slider.setOrientation(Qt.Horizontal)
         self.rotation_slider.setMinimum(-180)
         self.rotation_slider.setMaximum(180)
         self.rotation_slider.setValue(0)
         self.rotation_slider.valueChanged.connect(self.rotateCuttingPlane)
+
+        # Slider for moving cutting plane up and down
+        self.translation_label = QLabel('Translation (mm):')
+        self.translation_slider = QSlider()
+        self.translation_slider.setOrientation(Qt.Horizontal)
+        self.translation_slider.setMinimum(-50)
+        self.translation_slider.setMaximum(50)
+        self.translation_slider.setValue(0)
+        self.translation_slider.valueChanged.connect(self.translateCuttingPlane)
+
+        # Button to perform cut action
+        self.cut_button = QPushButton('Cut')
+        self.cut_button.clicked.connect(self.performCut)
+
+        # Groupbox for selecting up or down slicing
+        self.slice_direction_group = QGroupBox('Slice Direction')
+        self.up_radio = QRadioButton('Up')
+        self.down_radio = QRadioButton('Down')
+        self.up_radio.setChecked(True)  # Default to 'Up' slicing
+        self.slice_direction_layout = QVBoxLayout()
+        self.slice_direction_layout.addWidget(self.up_radio)
+        self.slice_direction_layout.addWidget(self.down_radio)
+        self.slice_direction_group.setLayout(self.slice_direction_layout)
 
         # VTK widget for 3D visualization
         self.vtk_widget = QVTKRenderWindowInteractor()
@@ -69,6 +92,10 @@ class OpalShapingApp(QMainWindow):
         right_layout.addWidget(self.generate_model_button)
         right_layout.addWidget(self.rotation_label)
         right_layout.addWidget(self.rotation_slider)
+        right_layout.addWidget(self.translation_label)
+        right_layout.addWidget(self.translation_slider)
+        right_layout.addWidget(self.cut_button)
+        right_layout.addWidget(self.slice_direction_group)
 
         layout.addLayout(left_layout)
         layout.addLayout(right_layout)
@@ -145,6 +172,41 @@ class OpalShapingApp(QMainWindow):
         transform.RotateWXYZ(angle, 0, 0, 1)
         self.plane_actor.SetUserTransform(transform)
         self.vtk_widget.GetRenderWindow().Render()
+
+    def translateCuttingPlane(self):
+        # Translate cutting plane up and down based on slider value
+        translation = self.translation_slider.value()
+        transform = vtk.vtkTransform()
+        transform.Translate(0, translation, 0)
+        self.plane_actor.SetUserTransform(transform)
+        self.vtk_widget.GetRenderWindow().Render()
+
+    def performCut(self):
+        # Perform the cutting action based on the selected slicing direction
+        if self.up_radio.isChecked():
+            direction = 'Up'
+        else:
+            direction = 'Down'
+
+        # Get the plane normal vector after rotation
+        plane_matrix = self.plane_actor.GetUserMatrix()
+        plane_normal = [plane_matrix.GetElement(0, 2), plane_matrix.GetElement(1, 2), plane_matrix.GetElement(2, 2)]
+
+        # Create a clipper
+        clipper = vtk.vtkClipPolyData()
+        clipper.SetInputConnection(self.plane_actor.GetMapper().GetInputConnection(0, 0))  # Specify port number 0
+        clipper.SetClipFunction(vtk.vtkPlane())
+        clipper.GetClipFunction().SetNormal(plane_normal)
+        if direction == 'Up':
+            clipper.GetClipFunction().SetOrigin(0, self.plane_actor.GetPosition()[1], 0)
+        else:
+            clipper.GetClipFunction().SetOrigin(0, self.plane_actor.GetPosition()[1] - 0.01, 0)  # Slightly offset for down direction
+
+        # Update the cutting plane with the clipped data
+        clipper.Update()
+        self.plane_actor.GetMapper().SetInputConnection(0, clipper.GetOutputPort(0))  # Specify port number 0
+        self.vtk_widget.GetRenderWindow().Render()
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
