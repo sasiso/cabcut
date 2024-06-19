@@ -1,8 +1,10 @@
 import sys
 import vtk
-import numpy as np
-from PyQt5.QtWidgets import QApplication, QComboBox, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QListWidget, QListWidgetItem
+import PyQt5
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QSlider
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+from actors import createRectangle, createOval, createRound
+from cutting_plane import getCuttingPlaneActor
 
 class OpalShapingApp(QMainWindow):
     def __init__(self):
@@ -11,13 +13,12 @@ class OpalShapingApp(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle('Opal Shaping Software')
-        self.setGeometry(100, 100, 1000, 600)
+        self.setGeometry(100, 100, 1200, 800)
 
         # Widgets for shape selection
         self.shape_label = QLabel('Select Shape:')
         self.shape_combobox = QComboBox()
         self.shape_combobox.addItems(['Rectangle', 'Oval', 'Round'])
-        self.shape_combobox.currentIndexChanged.connect(self.updateDimensionFields)
 
         # Widgets for dimensions input
         self.length_label = QLabel('Length (mm):')
@@ -33,29 +34,14 @@ class OpalShapingApp(QMainWindow):
         self.generate_model_button = QPushButton('Generate Model')
         self.generate_model_button.clicked.connect(self.generateModel)
 
-        # Widgets for adding cut parameters
-        self.angle_label = QLabel('Angle (degrees):')
-        self.angle_input = QLineEdit()
-
-        self.position_label = QLabel('Position (mm):')
-        self.position_input = QLineEdit()
-
-        self.direction_label = QLabel('Direction:')
-        self.direction_combobox = QComboBox()
-        self.direction_combobox.addItems(['Up', 'Down'])
-
-        # Button to add cut
-        self.add_cut_button = QPushButton('Add Cut')
-        self.add_cut_button.setEnabled(False)  # Disabled until model is generated
-        self.add_cut_button.clicked.connect(self.addCut)
-
-        # Button to export STL (placeholder)
-        self.export_stl_button = QPushButton('Export STL')
-        self.export_stl_button.setEnabled(False)  # Disabled until model is generated
-        self.export_stl_button.clicked.connect(self.exportSTL)
-
-        # List widget for displaying cuts
-        self.cut_list = QListWidget()
+        # Slider for rotating cutting plane
+        self.rotation_label = QLabel('Rotation Angle:')
+        self.rotation_slider = QSlider()
+        self.rotation_slider.setOrientation(PyQt5.QtCore.Qt.Horizontal)
+        self.rotation_slider.setMinimum(-180)
+        self.rotation_slider.setMaximum(180)
+        self.rotation_slider.setValue(0)
+        self.rotation_slider.valueChanged.connect(self.rotateCuttingPlane)
 
         # VTK widget for 3D visualization
         self.vtk_widget = QVTKRenderWindowInteractor()
@@ -69,119 +55,51 @@ class OpalShapingApp(QMainWindow):
         central_widget.setLayout(layout)
 
         left_layout = QVBoxLayout()
-        shape_layout = QHBoxLayout()
-        shape_layout.addWidget(self.shape_label)
-        shape_layout.addWidget(self.shape_combobox)
-
-        dimension_layout = QHBoxLayout()
-        dimension_layout.addWidget(self.length_label)
-        dimension_layout.addWidget(self.length_input)
-        dimension_layout.addWidget(self.width_label)
-        dimension_layout.addWidget(self.width_input)
-        dimension_layout.addWidget(self.height_label)
-        dimension_layout.addWidget(self.height_input)
-
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.generate_model_button)
-
-        cut_param_layout = QVBoxLayout()
-        cut_param_layout.addWidget(QLabel('Add Cut Parameters:'))
-        cut_param_layout.addWidget(self.angle_label)
-        cut_param_layout.addWidget(self.angle_input)
-        cut_param_layout.addWidget(self.position_label)
-        cut_param_layout.addWidget(self.position_input)
-        cut_param_layout.addWidget(self.direction_label)
-        cut_param_layout.addWidget(self.direction_combobox)
-        cut_param_layout.addWidget(self.add_cut_button)
-        cut_param_layout.addWidget(self.export_stl_button)
-
-        left_layout.addLayout(shape_layout)
-        left_layout.addLayout(dimension_layout)
-        left_layout.addLayout(button_layout)
-        left_layout.addLayout(cut_param_layout)
         left_layout.addWidget(self.vtk_widget)
 
         right_layout = QVBoxLayout()
-        right_layout.addWidget(QLabel('Cut List:'))
-        right_layout.addWidget(self.cut_list)
+        right_layout.addWidget(self.shape_label)
+        right_layout.addWidget(self.shape_combobox)
+        right_layout.addWidget(self.length_label)
+        right_layout.addWidget(self.length_input)
+        right_layout.addWidget(self.width_label)
+        right_layout.addWidget(self.width_input)
+        right_layout.addWidget(self.height_label)
+        right_layout.addWidget(self.height_input)
+        right_layout.addWidget(self.generate_model_button)
+        right_layout.addWidget(self.rotation_label)
+        right_layout.addWidget(self.rotation_slider)
 
         layout.addLayout(left_layout)
         layout.addLayout(right_layout)
 
-    def updateDimensionFields(self, index):
-        # Update dimension labels based on selected shape
-        shape = self.shape_combobox.currentText()
+        # Add initial cutting plane and axes
+        self.addCuttingPlane()
 
-        if shape == 'Rectangle':
-            self.length_label.setText('Length (mm):')
-            self.width_label.setText('Width (mm):')
-            self.height_label.setText('Height (mm):')
-        elif shape == 'Oval':
-            self.length_label.setText('Major Axis (mm):')
-            self.width_label.setText('Minor Axis (mm):')
-            self.height_label.setText('Height (mm):')
-        elif shape == 'Round':
-            self.length_label.setText('Diameter (mm):')
-            self.width_label.setVisible(False)
-            self.width_input.setVisible(False)
-            self.height_label.setText('Height (mm):')
+        # Initialize the render window
+        self.vtk_widget.Initialize()
+        self.vtk_widget.Start()
 
     def generateModel(self):
-        # Implement model generation based on shape and dimensions input using VTK
-        shape = self.shape_combobox.currentText()
-
+        # Generate the initial 3D model based on user input dimensions using VTK
         try:
+            shape = self.shape_combobox.currentText()
             length = float(self.length_input.text())
-            width = float(self.width_input.text()) if self.width_input.isVisible() else None
+            width = float(self.width_input.text())
             height = float(self.height_input.text())
 
             if shape == 'Rectangle':
-                self.createRectangle(length, width, height)
+                vtk_object = createRectangle(length, width, height)
             elif shape == 'Oval':
-                self.createOval(length, width, height)
+                vtk_object = createOval(length, width, height)
             elif shape == 'Round':
-                self.createRound(length, height)
+                vtk_object = createRound(length, width, height)
 
-            self.add_cut_button.setEnabled(True)
-            self.export_stl_button.setEnabled(True)
-            self.clearCutList()
+            self.displayModel(vtk_object)
+            self.addCuttingPlane()
 
         except ValueError:
             print("Invalid input. Please enter numeric values for dimensions.")
-
-    def createRectangle(self, length, width, height):
-        # Create a rectangular prism (cube) based on dimensions using VTK
-        cube = vtk.vtkCubeSource()
-        cube.SetXLength(length)
-        cube.SetYLength(width)
-        cube.SetZLength(height)
-
-        self.displayModel(cube)
-
-    def createOval(self, major_axis, minor_axis, height):
-        # Create an elliptical cylinder (oval) based on dimensions using VTK
-        cylinder = vtk.vtkCylinderSource()
-        cylinder.SetRadius(major_axis / 2.0)  # Major axis represents diameter in VTK
-        cylinder.SetHeight(height)
-        cylinder.SetResolution(50)  # Adjust resolution as needed
-
-        transform = vtk.vtkTransform()
-        transform.RotateX(90.0)  # Rotate cylinder to align with Z-axis
-
-        transform_filter = vtk.vtkTransformFilter()
-        transform_filter.SetInputConnection(cylinder.GetOutputPort())
-        transform_filter.SetTransform(transform)
-
-        self.displayModel(transform_filter)
-
-    def createRound(self, diameter, height):
-        # Create a cylinder (round) based on dimensions using VTK
-        cylinder = vtk.vtkCylinderSource()
-        cylinder.SetRadius(diameter / 2.0)  # Diameter represents radius in VTK
-        cylinder.SetHeight(height)
-        cylinder.SetResolution(50)  # Adjust resolution as needed
-
-        self.displayModel(cylinder)
 
     def displayModel(self, vtk_object):
         # Display the 3D model in the VTK render window
@@ -193,74 +111,40 @@ class OpalShapingApp(QMainWindow):
 
         self.ren.RemoveAllViewProps()
         self.ren.AddActor(actor)
+        self.addAxes(actor)  # Add axes after adding the actor
         self.ren.ResetCamera()
 
         self.vtk_widget.GetRenderWindow().Render()
 
-    def addCut(self):
-        # Add a new cut based on user input
-        angle = float(self.angle_input.text())
-        position = float(self.position_input.text())
-        direction = self.direction_combobox.currentText()
+    def addAxes(self, actor):
+        # Add X, Y, Z axes to the renderer using vtkCubeAxesActor
+        bounds = actor.GetBounds()
 
-        if direction == 'Up':
-            self.executeCut(angle, position, 'above')
-        elif direction == 'Down':
-            self.executeCut(angle, position, 'below')
+        axes = vtk.vtkCubeAxesActor()
+        axes.SetBounds(bounds)
+        axes.SetCamera(self.ren.GetActiveCamera())
+        axes.GetTitleTextProperty(0).SetColor(1, 0, 0)
+        axes.GetTitleTextProperty(1).SetColor(0, 1, 0)
+        axes.GetTitleTextProperty(2).SetColor(0, 0, 1)
+        axes.GetLabelTextProperty(0).SetColor(1, 0, 0)
+        axes.GetLabelTextProperty(1).SetColor(0, 1, 0)
+        axes.GetLabelTextProperty(2).SetColor(0, 0, 1)
 
-        # Add to cut list
-        cut_description = f"Angle: {angle}, Position: {position}, Direction: {direction}"
-        item = QListWidgetItem(cut_description)
-        self.cut_list.addItem(item)
-
-    def executeCut(self, angle, position, direction):
-        # Execute cut around the model based on angle, position, and direction
-        # Get current model
-        actor = self.ren.GetActors().GetLastActor()
-
-        if actor is None:
-            print("No model to cut. Generate a model first.")
-            return
-
-        polydata = actor.GetMapper().GetInput()
-
-        # Compute slice plane parameters
-        normal = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle)), 0.0])
-        origin = np.array([0.0, 0.0, position])
-
-        if direction == 'above':
-            normal *= -1  # Invert normal direction for above slicing
-
-        # Apply slice operation
-        plane = vtk.vtkPlane()
-        plane.SetNormal(normal)
-        plane.SetOrigin(origin)
-
-        cutter = vtk.vtkCutter()
-        cutter.SetCutFunction(plane)
-        cutter.SetInputData(polydata)
-        cutter.Update()
-
-        # Visualize the sliced model
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputData(cutter.GetOutput())
-
-        sliced_actor = vtk.vtkActor()
-        sliced_actor.SetMapper(mapper)
-
-        self.ren.RemoveAllViewProps()
-        self.ren.AddActor(sliced_actor)
-        self.ren.ResetCamera()
-
+        self.ren.AddActor(axes)
         self.vtk_widget.GetRenderWindow().Render()
 
-    def clearCutList(self):
-        # Clear the cut list widget
-        self.cut_list.clear()
+    def addCuttingPlane(self):
+        # Add cutting plane actor
+        self.plane_actor = getCuttingPlaneActor()  # Assuming getCuttingPlaneActor returns a vtkActor
+        self.ren.AddActor(self.plane_actor)
 
-    def exportSTL(self):
-        # Placeholder for exporting STL functionality
-        pass
+    def rotateCuttingPlane(self):
+        # Rotate cutting plane based on slider value
+        angle = self.rotation_slider.value()
+        transform = vtk.vtkTransform()
+        transform.RotateWXYZ(angle, 0, 0, 1)
+        self.plane_actor.SetUserTransform(transform)
+        self.vtk_widget.GetRenderWindow().Render()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
